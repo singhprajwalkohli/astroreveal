@@ -1,0 +1,4 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+html{background:#080d18;scroll-behavior:smooth}body{margin:0}*{letter-spacing:0}::selection{background:#d5ad4a;color:#101010}

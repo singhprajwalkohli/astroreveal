@@ -1,0 +1,28 @@
+{
+  "summary": "Completed external API and UI testing for AstroAI. Backend regression is 9/9 passing; homepage, auth, Kundli, chat, palm, compatibility, pricing, mobile navigation, and overflow checks passed. One dashboard persistence integration issue remains.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Authenticated dashboard refresh",
+        "issue": "After creating a Kundli, reloading the page and opening Dashboard shows the empty 'Your map awaits' state even though /api/dashboard and /api/kundli/latest contain the saved chart. App.js restores only /api/auth/me and never fetches dashboard/chart data on session restore.",
+        "affected_selectors": ["[data-testid=dashboard-button]", "[data-testid=dashboard-create-kundli-button]", "[data-testid=dashboard-view-kundli-button]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_astroai_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": ["On authenticated session restore, fetch /api/dashboard or /api/kundli/latest and hydrate the dashboard Kundli state."],
+  "critical_code_review_comments": ["The frontend does not consume the implemented dashboard persistence API, so saved chart state is lost from the UI after reload."],
+  "updated_files": ["/app/backend/server.py", "/app/backend/tests/test_astroai_api.py", "/app/test_reports/iteration_1.json"],
+  "success_rate": {"backend": "100%", "frontend": "90%"},
+  "seed_data_creation": "Used the provided astroai.test@example.com account and created TEST_/UI test Kundli and palm records; no new user account was created.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "External URL tested. Auth, API protection, chart persistence API, chat, palm validation/upload, navigation, pricing, compatibility, and mobile overflow passed. Retest dashboard hydration after reload. ASTROLOGY CALCULATIONS ARE MOCK DEVELOPMENT CALCULATIONS; AI and palm results may use clearly marked fallback text when unavailable; payments are UI-only.",
+  "rca of the issue": "Initial POST /api/kundli and /api/palm returned 500 because Motor added Mongo ObjectId values to inserted response dictionaries and FastAPI could not JSON-encode them. Fixed by removing _id before returning. Remaining dashboard issue is frontend state hydration: App.js only calls /api/auth/me on startup and does not request the persisted chart/dashboard payload."
+}

@@ -1,0 +1,39 @@
+{
+  "app_name": "AstroAI",
+  "theme": "dark_mystic",
+  "typography": {
+    "heading_font": "Cormorant Garamond",
+    "body_font": "Plus Jakarta Sans",
+    "mono_font": "JetBrains Mono"
+  },
+  "colors": {
+    "background": "#0b0f19",
+    "card_background": "#131c2e",
+    "primary": "#d4af37",
+    "accent": "#9333ea",
+    "text_main": "#f3f4f6",
+    "text_muted": "#9ca3af",
+    "border": "#1f293d"
+  },
+  "image_urls": {
+    "hero_cosmos": "https://images.unsplash.com/photo-1528722828814-77b9b83aafb2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwzfHxteXN0aWMlMjBhc3Ryb2xvZ3klMjBjb3Ntb3MlMjBzdGFyc3xlbnwwfHx8fDE3ODc1ODgzMjJ8MA&ixlib=rb-4.1.0&q=85",
+    "palm_sample": "https://images.pexels.com/photos/6642895/pexels-photo-6642895.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "kundli_wheel": "https://images.unsplash.com/photo-1729335511904-9b8690184935?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwyfHx2ZWRpYyUyMGt1bmRsaSUyMGhvcm9zY29wZSUyMHpvZGlhYyUyMG1hbmRhbGF8ZW58MHx8fHwxNzg3NTg4MzIyfDA&ixlib=rb-4.1.0&q=85",
+    "astrology_cards": "https://images.pexels.com/photos/7222056/pexels-photo-7222056.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+  },
+  "features": [
+    "AstroAI home and navigation",
+    "AI palm upload and analysis flow",
+    "Vedic Kundli birth profile form",
+    "Development Kundli chart and profile results",
+    "AI astrology interpretations",
+    "Ask Your Kundli chat",
+    "Email/password auth & user dashboard",
+    "Pricing UI & responsible astrology messaging"
+  ],
+  "accessibility": {
+    "contrast_ratio": "minimum 4.5:1",
+    "aria_labels": "mandatory on interactive buttons and inputs",
+    "data_testids": "mandatory on all buttons, links, and forms"
+  }
+}
