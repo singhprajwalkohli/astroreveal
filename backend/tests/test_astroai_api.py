@@ -120,6 +120,44 @@ def test_palm_rejects_unsupported_and_invalid_payloads(auth_client):
         assert response.json().get("detail")
 
 
+def test_geocode_search_too_short(client):
+    response = client.get(f"{BASE_URL}/api/geocode/search", params={"q": "Mu"}, timeout=30)
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+
+
+def test_geocode_search_returns_matches(client):
+    response = client.get(f"{BASE_URL}/api/geocode/search", params={"q": "Mumbai"}, timeout=30)
+    assert response.status_code == 200
+    results = response.json().get("results", [])
+    assert len(results) >= 1
+    first = results[0]
+    for field in ("display_name", "latitude", "longitude", "timezone"):
+        assert field in first
+    assert isinstance(first["latitude"], float)
+    assert isinstance(first["longitude"], float)
+
+
+def test_kundli_uses_user_provided_coordinates(auth_client):
+    payload = {
+        "name": "TEST_Autocomplete User",
+        "dob": "1990-05-15",
+        "birth_time": "14:30",
+        "birthplace": "Mumbai, Maharashtra, India",
+        "latitude": 19.0759837,
+        "longitude": 72.8776559,
+        "timezone_name": "Asia/Kolkata",
+    }
+    response = auth_client.post(f"{BASE_URL}/api/kundli", json=payload, timeout=120)
+    assert response.status_code == 200, response.text
+    chart = response.json()
+    assert chart["coordinates"]["timezone"] == "Asia/Kolkata"
+    assert chart["lagna"]
+    assert chart["rashi"]
+    assert isinstance(chart["nakshatra"], dict) and chart["nakshatra"].get("name")
+    assert chart["interpretation"] and len(chart["interpretation"]) > 200
+
+
 def test_dashboard_shape(auth_client):
     response = auth_client.get(f"{BASE_URL}/api/dashboard", timeout=30)
     assert response.status_code == 200

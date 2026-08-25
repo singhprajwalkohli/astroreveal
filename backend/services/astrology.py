@@ -42,6 +42,19 @@ class LocationService:
             raise AstrologyCalculationError("We could not determine a timezone for that birthplace.")
         return {"query": birthplace, "display_name": result.address, "latitude": round(result.latitude, 6), "longitude": round(result.longitude, 6), "timezone": tz, "source": "Nominatim geocoder + TimezoneFinder"}
 
+    async def search(self, query: str, limit: int = 6):
+        try:
+            results = await asyncio.to_thread(self.geocoder.geocode, query, exactly_one=False, limit=limit, addressdetails=True, timeout=8) or []
+        except Exception:
+            return []
+        matches = []
+        for r in results:
+            tz = self.timezone_finder.timezone_at(lng=r.longitude, lat=r.latitude)
+            if not tz:
+                continue
+            matches.append({"display_name": r.address, "latitude": round(r.latitude, 6), "longitude": round(r.longitude, 6), "timezone": tz})
+        return matches
+
 
 def _sign(longitude: float):
     index = int(longitude // 30) % 12

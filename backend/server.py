@@ -46,6 +46,14 @@ async def current_user(authorization: str | None = Header(default=None)):
 @api.get("/")
 async def root(): return {"message": "AstroAI API ready"}
 
+@api.get("/geocode/search")
+async def geocode_search(q: str):
+    q = q.strip()
+    if len(q) < 3:
+        return {"results": []}
+    results = await astrology.locations.search(q, limit=6)
+    return {"results": results}
+
 @api.post("/auth/register")
 async def register(data: AuthInput):
     if await db.users.find_one({"email": data.email.lower()}): raise HTTPException(409, "An account with this email already exists")

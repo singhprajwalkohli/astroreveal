@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 6 verified the AstroAI pricing rewrite (3 INR products), checkout gate (no-fake-success), and location autocomplete additions, plus the four requested regressions. Backend pytest suite (13/13 PASS) covers /api/geocode/search happy + short-query paths and a user-provided-coords /api/kundli call. Frontend Playwright suite on desktop 1920x1080 and mobile 390x844 covers pricing structure, hero + card CTAs, checkout amounts, pay-button-shows-toast-but-does-NOT-navigate, preview routing (palm/kundli/bundle with BUNDLE STEP eyebrow), autocomplete suggestions + resolved indicator + no-pick toast, and mobile 1-column stack with zero horizontal overflow.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_astroai_api.py",
+    "/app/test_reports/pytest/iteration_6.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "App.js is now ~57 lines but every component is on a single dense line — readability is poor. Splitting into src/components/{Home,Checkout,KundliForm,KundliResult,PalmFlow,Dashboard,Auth,Toast}.jsx would materially help future iterations (functional regression risk is currently absorbed by test coverage but code review + diffs are painful).",
+    "PACKAGES constant is defined AFTER the App function that references it (via startPackage/Checkout). It works because of module-level const hoisting for function declarations, but relying on this ordering when Checkout references PACKAGES via closure is brittle — recommend hoisting PACKAGES to the top of the file.",
+    "Checkout `attempt()` uses setTimeout(1200) to simulate a gateway call; consider using AbortController + a dedicated 'processing' state so users can cancel. Not a bug, just UX polish.",
+    "KundliForm useEffect debounce is 350ms — a 3-character 'Mum' query legitimately fires the geocoder. This is fine per spec, but consider adding a minimum debounce of 500ms if Nominatim rate-limits are ever hit.",
+    "Body still has scrollWidth=531px at 390px viewport while html/documentElement is 390 (overflow-x:hidden on html+body clips it). Functionally invisible but indicates some inner element is wider than viewport; worth auditing when time permits (does not affect users)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_astroai_api.py (added 3 new tests: test_geocode_search_too_short, test_geocode_search_returns_matches, test_kundli_uses_user_provided_coordinates)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% on all 8 requested items across desktop + mobile"},
+  "test_credentials": "astroai.test@example.com / AstroAI!2025 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Backend test created 'TEST_Autocomplete User' (Mumbai · 1990-05-15 · 14:30, user-provided coords 19.0759837/72.8776559/Asia/Kolkata) via /api/kundli; also 'TEST_Astro User' from the existing regression suite. Both persist in db.kundlis under the astroai.test account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Verified findings — Home pricing: [data-testid='home-pricing'] renders exactly 3 cards; palm has 7 feature <div> rows, kundli has 9, bundle is featured with 'SAVE ₹39' badge. Amounts: pricing-amount-palm/kundli='₹99one-time', bundle='₹159one-time'. Savings note matches spec verbatim. Hero CTAs and all 3 pricing CTAs route to Checkout with correct data-testid='checkout-amount' values. Pay button ([data-testid='checkout-pay-button']) shows 1.2s spinner then surfaces app-toast 'Payment gateway not yet connected. Continue with the free preview to explore your reading.' — checkout-view remains visible (verified via is_visible()) and NO paid success screen ever renders. Preview button routes: palm→Palm Reading, kundli→Kundli form (no bundle eyebrow), bundle→Kundli form with '02 / VEDIC ASTROLOGY · BUNDLE STEP 1/2' eyebrow. Autocomplete: 'Mumbai' returns 1 suggestion → picking yields resolved 'Selected: 19.055, 72.869 · Asia/Kolkata'; submitting without picking triggers toast 'Please pick a birthplace from the suggestions so we can resolve exact coordinates.' Backend /api/kundli with user-provided coords returned Simha lagna, Makara rashi, Uttara Ashadha pada 2, plus a 16K+ char AI interpretation (no 503). Mobile 390x844: pricing-grid gridTemplateColumns collapses to single column (measured '358px' width); html.scrollWidth == html.clientWidth == 390 on Home, Checkout, and Kundli form. Note body.scrollWidth=531 on Home but overflow-x:hidden on html+body clips it (no user-visible scrollbar). Toast auto-dismisses at 5.2s.",
+  "rca of the issue": "N/A — no issues found this iteration."
+}
