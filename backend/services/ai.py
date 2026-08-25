@@ -1,4 +1,3 @@
-```python
 import os
 import base64
 
@@ -10,15 +9,15 @@ class AIServiceUnavailable(Exception):
     pass
 
 
-def _client():
-    key = os.environ.get("GEMINI_API_KEY")
+def get_client():
+    api_key = os.environ.get("GEMINI_API_KEY")
 
-    if not key:
+    if not api_key:
         raise AIServiceUnavailable(
             "AI interpretation is not configured on the server"
         )
 
-    return genai.Client(api_key=key)
+    return genai.Client(api_key=api_key)
 
 
 async def ask_ai(
@@ -27,58 +26,61 @@ async def ask_ai(
     system: str = "",
 ):
     try:
-        client = _client()
+        client = get_client()
 
-        contents = []
-
-        if system:
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(
-                            text=system
-                        )
-                    ],
-                )
-            )
-
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(
-                        text=prompt
-                    )
-                ],
-            )
-        )
+        parts = []
 
         if image_base64:
-            # Remove data URL prefix if present
-            if "," in image_base64 and image_base64.startswith("data:"):
-                image_base64 = image_base64.split(",", 1)[1]
+            mime_type = "image/jpeg"
+
+            if image_base64.startswith("data:"):
+                header, image_base64 = image_base64.split(",", 1)
+
+                if ";" in header:
+                    mime_type = header.split(";", 1)[0].replace(
+                        "data:", ""
+                    )
 
             try:
                 image_bytes = base64.b64decode(
                     image_base64,
-                    validate=True
+                    validate=True,
                 )
             except Exception as exc:
                 raise AIServiceUnavailable(
                     "The uploaded image could not be processed"
                 ) from exc
 
-            contents[-1].parts.append(
+            parts.append(
                 types.Part.from_bytes(
                     data=image_bytes,
-                    mime_type="image/jpeg",
+                    mime_type=mime_type,
                 )
             )
 
+        parts.append(
+            types.Part.from_text(
+                text=prompt,
+            )
+        )
+
         response = await client.aio.models.generate_content(
             model="gemini-2.5-flash",
-            contents=contents,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=parts,
+                )
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=system
+                or (
+                    "You are a responsible Vedic astrology assistant. "
+                    "Use traditional language. Never make certain "
+                    "predictions. Never provide medical advice. "
+                    "Never invent chart data."
+                )
+            ),
         )
 
         text = (response.text or "").strip()
@@ -95,7 +97,8 @@ async def ask_ai(
 
     except Exception as exc:
         raise AIServiceUnavailable(
-            "AI interpretation is temporarily unavailable. Please try again."
+            "AI interpretation is temporarily unavailable. "
+            "Please try again."
         ) from exc
 
 
@@ -104,20 +107,20 @@ class PalmReadingService:
     async def analyze(
         self,
         image_base64: str,
-        hand: str
+        hand: str,
     ):
-        return await ask_ai(
-            f"""
-Analyze this {hand} palm photograph for a traditional palmistry reading.
+        prompt = f"""
+Analyze this {hand} palm photograph for a traditional
+palmistry reading.
 
-First determine whether a clear human palm is actually visible.
+First determine whether a clear human palm is visible.
 
-If the palm is unclear, too blurry, partially hidden, or not a palm,
-return exactly:
+If the palm is unclear, too blurry, partially hidden,
+or not actually a palm, return exactly:
 
 INVALID_PALM
 
-If a clear palm is visible, provide concise sections:
+If a clear palm is visible, provide these sections:
 
 Personality
 Life line
@@ -131,36 +134,43 @@ Strengths
 Challenges
 Outlook
 
-Only describe lines or features that are reasonably visible.
+Only describe palm lines and features that are reasonably
+visible in the photograph.
 
 Use responsible, non-certain language.
 
-Clearly state that palmistry is a traditional/spiritual interpretation
-and is not scientifically validated.
+Clearly state that palmistry is a traditional/spiritual
+interpretation and is not scientifically validated.
 
 Do not diagnose medical conditions.
 Do not predict death.
 Do not make guaranteed predictions.
-""",
-            image_base64=image_base64,
-            system="""
+"""
+
+        system = """
 You are a careful palmistry image analyst.
 
-Never invent palm lines or features that cannot reasonably be seen.
+Never invent palm lines or features that cannot reasonably
+be seen.
 
 If the image quality is insufficient to interpret the palm,
 return INVALID_PALM.
 
-Do not provide medical diagnoses or claims.
+Do not provide medical diagnoses.
+Do not predict death.
 Do not present palmistry as scientific fact.
-""",
+"""
+
+        return await ask_ai(
+            prompt=prompt,
+            image_base64=image_base64,
+            system=system,
         )
 
 
 class AstrologyInterpretationService:
 
     async def interpret(self, kundli: dict):
-
         calculation = {
             key: value
             for key, value in kundli.items()
@@ -172,13 +182,14 @@ class AstrologyInterpretationService:
             }
         }
 
-        return await ask_ai(
-            f"""
-Interpret ONLY the following server-calculated Vedic astrology data:
+        prompt = f"""
+Interpret ONLY the following server-calculated Vedic
+astrology data:
 
 {calculation}
 
-Cover, where supported by the supplied data:
+Cover the following areas where the supplied data
+supports them:
 
 Career
 Finance
@@ -197,12 +208,14 @@ Do not calculate planetary positions yourself.
 
 Do not estimate missing information.
 
-Do not invent houses, planets, nakshatras, dashas, yogas, or dates.
+Do not invent houses, planets, nakshatras, dashas,
+yogas, or dates.
 
-If something cannot be determined from the supplied data,
-clearly say that it cannot be determined.
+If something cannot be determined from the supplied
+data, clearly say that it cannot be determined.
 
 Use language such as:
+
 "may suggest"
 "traditionally interpreted as"
 "could indicate"
@@ -215,17 +228,26 @@ Do not predict death.
 
 Do not guarantee wealth or financial outcomes.
 
-Explain that this is a traditional astrological interpretation.
-""",
-            system="""
-You are a responsible Vedic astrology interpretation assistant.
+Explain that this is a traditional astrological
+interpretation.
+"""
 
-The calculation engine has already calculated the astrology data.
+        system = """
+You are a responsible Vedic astrology interpretation
+assistant.
+
+The astrology calculation engine has already calculated
+the chart data.
 
 Your job is ONLY to interpret the supplied data.
 
 Never invent or recalculate planetary positions.
-""",
+Never create missing chart information.
+"""
+
+        return await ask_ai(
+            prompt=prompt,
+            system=system,
         )
 
 
@@ -234,9 +256,8 @@ class KundliChatService:
     async def answer(
         self,
         question: str,
-        kundli: dict
+        kundli: dict,
     ):
-
         calculation = {
             key: value
             for key, value in kundli.items()
@@ -248,8 +269,7 @@ class KundliChatService:
             }
         }
 
-        return await ask_ai(
-            f"""
+        prompt = f"""
 Answer the user's question using ONLY the following
 server-calculated Vedic astrology data:
 
@@ -271,14 +291,18 @@ Do not provide medical diagnoses.
 Do not predict death.
 
 Do not guarantee financial or relationship outcomes.
-""",
-            system="""
-You are the Ask Your Kundli AI assistant.
+"""
+
+        system = """
+You are the AstroReveal Ask Your Kundli AI assistant.
 
 Use only the server-calculated Kundli data provided to you.
 
 Never invent missing chart information.
 Never calculate planetary positions yourself.
-""",
+"""
+
+        return await ask_ai(
+            prompt=prompt,
+            system=system,
         )
-```
