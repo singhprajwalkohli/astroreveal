@@ -105,6 +105,7 @@ requests-oauthlib==2.0.0
 rich==15.0.0
 rpds-py==2026.6.3
 rsa==4.9.1
+setuptools<82
 s3transfer==0.19.2
 s5cmd==0.2.0
 shellingham==1.5.4
