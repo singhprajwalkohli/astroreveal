@@ -73,3 +73,22 @@
 .pay-note strong{display:block;color:var(--text);font-size:13px;margin-bottom:6px}
 .pay-note p{margin:0;color:var(--muted);font-size:12px;line-height:1.7}
 .preview-btn{margin-top:6px}
+
+/* Entitlements + locked report UI */
+.ent-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}
+.ent-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(213,173,74,.12);border:1px solid rgba(213,173,74,.42);color:var(--gold2);font-size:10px;letter-spacing:1.1px;font-weight:600}
+.ent-chip svg{color:var(--gold)}
+.ent-chip-muted{background:transparent;border-color:var(--line);color:var(--muted)}
+.locked-cta{margin-top:26px;padding:22px;border:1px solid rgba(213,173,74,.42);background:rgba(213,173,74,.06);display:grid;gap:12px}
+.locked-badge{display:inline-flex;gap:8px;align-items:center;color:var(--gold);font-size:10px;letter-spacing:1.6px;font-weight:700}
+.locked-cta p{color:#cbd1dc;font-size:13px;line-height:1.7;margin:0}
+.locked-actions{display:flex;gap:12px;flex-wrap:wrap}
+.locked-pill{background:rgba(213,173,74,.14);color:var(--gold);padding:3px 8px;font-size:9px;letter-spacing:1.4px}
+.dash-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.dash-unlock{padding:9px 14px;font-size:11px}
+.pay-note-ok{background:rgba(213,173,74,.06);border-color:rgba(213,173,74,.36)}
+.pay-status{margin:8px 0 0;font-size:12px}
+.pay-status-ok{color:var(--gold2)}
+.pay-status-fail{color:#efaa9d}
+.pay-note code{background:#0c1422;border:1px solid var(--line);padding:2px 6px;font-size:11px;color:var(--gold2)}
+
