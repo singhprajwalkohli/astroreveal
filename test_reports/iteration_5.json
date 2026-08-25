@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 5 regression re-verified the three items from iteration 4 plus a smoke happy path on desktop 1920x1080 and mobile 375x812. All three previously reported issues are FIXED. Backend was intentionally not re-run per request; only frontend + a light live smoke against real backend was executed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/palm", "issue": "Grey 10x10 PNG returned a 503-flavoured toast text ('AI interpretation is temporarily unavailable. Please try again.') instead of the expected 422 wording ('could not confirm a clear palm'). Toast/dialog behaviour is correct (toast, no alert). Likely the vision model timed out or refused rather than emitting a structured invalid-palm 422. Worth confirming palm validation branch on tiny/blank images."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/browser_iteration5/mobile_kundli_result.png",
+    "/app/test_reports/browser_iteration5/toast_kundli.png",
+    "/app/test_reports/browser_iteration5/toast_palm.png"
+  ],
+  "action_items": [
+    "(Optional) Investigate why grey PNG palm upload surfaces the generic 'AI temporarily unavailable' 503 toast instead of the structured 'could not confirm a clear palm' 422; may indicate the vision validation branch throws before returning 422."
+  ],
+  "critical_code_review_comments": [
+    "App.js remains a single ~44-line densely-packed file with all views inline; splitting into src/components/{Auth,Home,PalmFlow,KundliForm,KundliResult,Dashboard,Toast}.jsx would materially help future review. This is a code-hygiene note; functionally it works.",
+    "Toast auto-dismiss (5.2s) plus no queueing means fast successive errors may hide each other; consider a small stack or manual-dismiss-only for errors."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not re-run (per request)", "frontend": "100% on the three regressions + smoke (auth, kundli create, chart chat, palm error handling, dashboard, no bundle leak)"},
+  "test_credentials": "astroai.test@example.com / AstroAI!2025 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "No new users. Reused existing TEST_UI_User Kundli (Mumbai, India · 1990-05-15 · 14:30) already persisted for the seeded account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression verification confirmed: (1) Mobile Kundli result at 375x812 now measures html.scrollWidth = html.clientWidth = body.scrollWidth = 375 with zero overflow offenders detected via DOM sweep. (2) Errors on /api/kundli (unresolvable birthplace 'ZZZZZZ-nonexistent-city-xyz' -> 422) and /api/palm (grey PNG) now surface via [data-testid='app-toast'] with role='alert'; a page.on('dialog', ...) listener captured zero events in both flows. (3) Home page renders all five new sections: [data-testid='home-how-it-works'] with 3 .step-card children, [data-testid='home-compat-samples'] (Compat teaser + Sample Reports), .home-pricing with 2 Price cards (Free + Premium), [data-testid='home-faq'] with 4 <details.faq-item>, [data-testid='home-disclaimer']. Smoke: login, TEST_UI_User Mumbai Kundli render (Simha ascendant · Makara moon · Uttara Ashadha Pada 2 · Asia/Kolkata), and chart-grounded chat answered 'What does my 10th house indicate?' with a 4413-char response that explicitly references '10th house sign: Vrishabha (Taurus)' derived from the chart. Bundle scan: no 'sk-emergent' present in /static/js/bundle.js (1.79MB) or any third-party script. Note the toast auto-dismisses after 5.2s -- if next testing agent polls only after the timeout window the toast will appear absent; poll during the window instead.",
+  "rca of the issue": "N/A - all three iteration_4 issues (mobile overflow, alert() usage, missing Home sections) verified fixed."
+}

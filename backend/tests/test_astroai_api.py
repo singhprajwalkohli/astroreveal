@@ -70,12 +70,23 @@ def test_kundli_create_persists_and_returns_chart(auth_client):
     assert response.status_code == 200
     chart = response.json()
     assert chart["name"] == payload["name"]
-    assert chart["engine_status"] == "MOCK DEVELOPMENT CALCULATIONS"
+    assert chart["engine_status"] == "SWISS EPHEMERIS · LAHIRI SIDEREAL"
+    assert chart["coordinates"]["latitude"]
+    assert chart["coordinates"]["longitude"]
+    assert chart["coordinates"]["timezone"]
+    assert chart["houses"] and len(chart["houses"]) == 12
+    assert chart["dashas"] and chart["planets"][0]["longitude"] is not None
     assert chart["planets"] and len(chart["planets"]) >= 9
+    assert isinstance(chart["nakshatra"], dict)
+    assert {"name", "pada", "lord"} <= chart["nakshatra"].keys()
+    assert all(isinstance(planet["nakshatra"], dict) and planet["house"] >= 1 for planet in chart["planets"])
     assert chart["interpretation"]
     latest = auth_client.get(f"{BASE_URL}/api/kundli/latest", timeout=30)
     assert latest.status_code == 200
-    assert latest.json()["name"] == payload["name"]
+    latest_chart = latest.json()
+    assert latest_chart["name"] == payload["name"]
+    assert "_id" not in latest_chart
+    assert latest_chart.get("interpretation"), "latest chart must persist the AI interpretation"
 
 
 def test_chat_uses_chart_context(auth_client):
@@ -90,13 +101,23 @@ def test_palm_rejects_invalid_image(auth_client):
     assert "image" in response.json()["detail"].lower()
 
 
-def test_palm_accepts_featured_jpeg(auth_client):
-    # Small non-uniform JPEG-like payload used only to exercise MIME validation and service flow.
-    image = base64.b64encode(bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffdb004300" + "10" * 67 + "ffc00011080001000103011100021101031101ffda000c03010002110311003f00" + "00" * 8 + "ffd9")).decode()
-    response = auth_client.post(f"{BASE_URL}/api/palm", json={"image_base64": f"data:image/jpeg;base64,{image}", "hand": "left"}, timeout=120)
-    assert response.status_code == 200
-    assert response.json()["hand"] == "left"
-    assert response.json().get("reading")
+def test_palm_rejects_mismatched_image_bytes(auth_client):
+    image = base64.b64encode(b"not-a-jpeg").decode()
+    response = auth_client.post(f"{BASE_URL}/api/palm", json={"image_base64": f"data:image/jpeg;base64,{image}", "hand": "left"}, timeout=30)
+    assert response.status_code == 400
+    assert "contents" in response.json()["detail"]
+
+
+def test_palm_rejects_unsupported_and_invalid_payloads(auth_client):
+    cases = [
+        ("data:image/svg+xml;base64,PHN2Zy8+", 400),
+        ("data:image/png;base64,%%%", 400),
+        ("data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff" + b"x" * (10 * 1024 * 1024)).decode(), 413),
+    ]
+    for image_base64, expected_status in cases:
+        response = auth_client.post(f"{BASE_URL}/api/palm", json={"image_base64": image_base64, "hand": "right"}, timeout=30)
+        assert response.status_code == expected_status
+        assert response.json().get("detail")
 
 
 def test_dashboard_shape(auth_client):

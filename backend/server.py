@@ -6,9 +6,9 @@ from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import os, jwt, uuid
-from services.astrology import AstrologyService
-from services.ai import PalmReadingService, AstrologyInterpretationService, KundliChatService
+import base64, os, re, jwt, uuid
+from services.astrology import AstrologyCalculationError, AstrologyService
+from services.ai import AIServiceUnavailable, PalmReadingService, AstrologyInterpretationService, KundliChatService
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -25,6 +25,7 @@ class AuthInput(BaseModel):
     password: str = Field(min_length=6)
 class ProfileInput(BaseModel):
     name: str; dob: str; birth_time: str; birthplace: str
+    latitude: float | None = None; longitude: float | None = None; timezone_name: str | None = None
 class PalmInput(BaseModel):
     image_base64: str; hand: str
 class ChatInput(BaseModel):
@@ -63,24 +64,48 @@ async def me(user=Depends(current_user)): return user
 
 @api.post("/kundli")
 async def create_kundli(data: ProfileInput, user=Depends(current_user)):
-    result = await astrology.calculate_kundli(**data.model_dump())
-    result["id"] = str(uuid.uuid4()); result["user_id"] = user["id"]; result["created_at"] = datetime.now(timezone.utc).isoformat()
-    await db.kundlis.insert_one(result)
-    interpretation = await AstrologyInterpretationService().interpret(result)
-    result["interpretation"] = interpretation or "MOCK AI INTERPRETATION: Traditional astrology suggests a period for patient learning and steady progress. Explore the sections below as reflective guidance, not certainty."
-    result.pop("user_id", None); result.pop("_id", None); return result
+    try:
+        result = await astrology.calculate_kundli(**data.model_dump())
+    except AstrologyCalculationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    chart_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
+    chart_doc = {**result, "id": chart_id, "user_id": user["id"], "created_at": created_at}
+    await db.kundlis.insert_one(chart_doc)
+    try:
+        interpretation = await AstrologyInterpretationService().interpret(chart_doc)
+    except AIServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    await db.kundlis.update_one({"id": chart_id, "user_id": user["id"]}, {"$set": {"interpretation": interpretation}})
+    chart_doc["interpretation"] = interpretation
+    chart_doc.pop("user_id", None); chart_doc.pop("_id", None); return chart_doc
 
 @api.get("/kundli/latest")
 async def latest_kundli(user=Depends(current_user)):
-    result = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    result = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0, "user_id": 0}, sort=[("created_at", -1)])
     if not result: raise HTTPException(404, "Create your first Kundli to see it here")
     return result
 
 @api.post("/palm")
 async def palm(data: PalmInput, user=Depends(current_user)):
-    if not data.image_base64.startswith("data:image/"): raise HTTPException(400, "Please upload a JPG, PNG, or WEBP image")
-    reading = await PalmReadingService().analyze(data.image_base64.split(",", 1)[-1], data.hand)
-    reading = reading or "MOCK AI READING: A clear palm image would allow the AI to interpret your major lines. This development response is not a scientific prediction."
+    match = re.match(r"^data:(image/(?:jpeg|png|webp));base64,(.+)$", data.image_base64, re.DOTALL)
+    if not match:
+        raise HTTPException(400, "Please upload a JPG, PNG, or WEBP image")
+    try:
+        image_bytes = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:
+        raise HTTPException(400, "The uploaded image is not valid base64 data") from exc
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Please upload an image smaller than 10MB")
+    signatures = {"image/jpeg": (b"\xff\xd8\xff",), "image/png": (b"\x89PNG\r\n\x1a\n",), "image/webp": (b"RIFF",)}
+    if not any(image_bytes.startswith(signature) for signature in signatures[match.group(1)]):
+        raise HTTPException(400, "The file contents do not match a JPG, PNG, or WEBP image")
+    try:
+        reading = await PalmReadingService().analyze(match.group(2), data.hand)
+    except AIServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if "INVALID_PALM" in reading.upper():
+        raise HTTPException(422, "The AI could not confirm a clear palm. Please use good lighting and show the entire palm.")
     doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "hand": data.hand, "reading": reading, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.palm_readings.insert_one(doc); doc.pop("user_id", None); doc.pop("_id", None); return doc
 
@@ -88,14 +113,16 @@ async def palm(data: PalmInput, user=Depends(current_user)):
 async def chat(data: ChatInput, user=Depends(current_user)):
     chart = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
     if not chart: raise HTTPException(400, "Create a Kundli before asking your chart a question")
-    answer = await KundliChatService().answer(data.question, chart)
-    answer = answer or "MOCK AI RESPONSE: Your chart suggests reflecting on steady, practical choices during this period. Create a live Kundli to unlock chart-grounded answers."
+    try:
+        answer = await KundliChatService().answer(data.question, chart)
+    except AIServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     await db.ai_conversations.insert_one({"id": str(uuid.uuid4()), "user_id": user["id"], "question": data.question, "answer": answer, "created_at": datetime.now(timezone.utc).isoformat()})
     return {"answer": answer}
 
 @api.get("/dashboard")
 async def dashboard(user=Depends(current_user)):
-    kundli = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    kundli = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0, "user_id": 0}, sort=[("created_at", -1)])
     palms = await db.palm_readings.count_documents({"user_id": user["id"]})
     return {"user": user, "kundli": kundli, "palm_readings": palms}
 

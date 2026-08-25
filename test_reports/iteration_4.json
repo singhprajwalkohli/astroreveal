@@ -1,0 +1,62 @@
+{
+  "summary": "Full E2E regression on AstroAI. Backend 10/10 tests pass (real Swiss Ephemeris + persistence + AI interpretation + chart chat + palm validation). Frontend E2E: homepage/auth/Kundli create+result/chart-grounded chat/palm upload flow all work with the seeded account; no LLM key leaked in the bundle. Two UX issues remain: mobile horizontal overflow on the Kundli result view (scrollWidth 397 vs clientWidth 375 at 375px), and error handling still uses native browser alert() dialogs. Home page also omits several sections listed in the PRD.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "KundliResult (mobile)",
+        "issue": "Horizontal overflow at 375px viewport (scrollWidth=397). The 'TEST_UI_User' / large serif headline and/or the planet-table row layout push past the viewport. Content is clipped/needs horizontal scroll on mobile.",
+        "selector": ".result-page, .planet-row, h1",
+        "priority": "HIGH"
+      },
+      {
+        "component": "App error handling (createKundli, sendPalm)",
+        "issue": "Errors on /api/kundli and /api/palm surface via native browser alert() dialogs (App.js lines 19-20). Message is friendly (no raw JSON) but breaks the premium visual system, is not styled/accessible, and blocks the UI. Should be an in-app toast/error card.",
+        "selector": "[data-testid=\"generate-kundli-button\"], [data-testid=\"analyze-palm-button\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Home",
+        "issue": "PRD lists Home sections: How It Works, AI Palm Reading, Vedic Kundli, Ask Your Kundli AI, Compatibility, Sample Reports, Pricing, FAQ, Responsible Astrology, Footer. Currently only hero, intro, feature-grid (palm + kundli), Ask-Your-Kundli band, disclaimer and footer render on Home. Missing: How It Works, Compatibility teaser, Sample Reports, Pricing tier cards, FAQ.",
+        "selector": "Home component in /app/frontend/src/App.js",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Kundli result (mobile 375x812)",
+        "issues": ["Content overflows viewport horizontally by ~22px; the large italic 'Kundli.' heading and planet rows should wrap/reflow.", "Native alert() dialogs used for error feedback break visual continuity."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_astroai_api.py",
+    "/app/test_reports/pytest/pytest_results_iteration4.xml",
+    "/app/test_reports/browser_iteration4/kundli_result.png",
+    "/app/test_reports/browser_iteration4/mobile_home.png",
+    "/app/test_reports/browser_iteration4/mobile_kundli.png"
+  ],
+  "action_items": [
+    "Fix mobile horizontal overflow on Kundli result page (constrain h1 with word-break/overflow-wrap, make .planet-row responsive, add max-width:100vw and overflow-x:hidden on .result-page).",
+    "Replace window.alert(...) in App.js createKundli/sendPalm with in-app styled error toast/banner that matches the dark/gold design.",
+    "Add the remaining PRD Home sections (How It Works, Sample Reports, Pricing tier cards, FAQ, Compatibility teaser) to the Home component, or update PRD to reflect current scope."
+  ],
+  "critical_code_review_comments": [
+    "App.js is a single ~35-line minified-style file with entire views inline; splitting into components (Auth, PalmFlow, KundliForm, KundliResult, Dashboard) will materially improve maintainability and reviewability.",
+    "Error UX pattern relies on window.alert(); introduce a lightweight toast provider so /api/palm 422 and /api/kundli 503 responses are rendered in-app.",
+    "server.py: /api/dashboard returns the raw user document (excluding _id + password_hash) but still includes fields like created_at; consider pruning to a stable public shape.",
+    "server.py: /api/kundli inserts before AI, then updates; if AI fails after insert, an interpretation-less chart is still persisted (unreachable to user via 503, but visible on /api/kundli/latest next login). Consider inserting only after interpretation succeeds."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "85% (auth, kundli create+result render, chart-grounded chat, palm 422 flow, dashboard, no key leak all pass; mobile overflow + alert UX remain)"},
+  "test_credentials": "astroai.test@example.com / AstroAI!2025 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Used existing seeded account; created one additional TEST_UI_User Kundli (Mumbai, India · 1990-05-17 · 14:30) and triggered one palm 422 (grey 10x10 PNG). No new accounts.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression is stable (test_astroai_api.py 10/10; note: pytest must be run with REACT_APP_BACKEND_URL exported, e.g. `export $(grep REACT_APP_BACKEND_URL /app/frontend/.env) && pytest ...`). Kundli render crash from iteration_3 is FIXED (App.js now renders data?.nakshatra?.name). Live AI (Kundli interpretation + Chat) was healthy in this run — no 503s observed end-to-end. Remaining work is presentational: mobile CSS overflow on Kundli result and replacing window.alert() with in-app toast. Playwright note: [data-testid=palm-upload-input] is a hidden <input type=file>; use page.set_input_files directly instead of waiting for visibility. Palm error surfaces as a native browser dialog — attach a page.on('dialog', ...) handler to observe.",
+  "rca of the issue": "Mobile overflow: KundliResult uses .result-head large italic h1 without a mobile max-width/word-break, and .planet-row rows have a fixed 3-column layout that exceeds 375px. Fix in App.css @media (max-width:480px) by reducing h1 clamp size and stacking .planet-row. Alert UX: App.js:19-20 use window.alert() directly; wire a toast state into App and render inside .app-shell."
+}

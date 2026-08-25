@@ -9,7 +9,7 @@ Build a production-quality, mobile-first AstroAI web application combining Vedic
 - JWT email/password authentication with bcrypt hashing and a simple seven-day session.
 - `AstrologyService`, `PalmReadingService`, `AstrologyInterpretationService`, and `KundliChatService` isolate replaceable integrations.
 - GPT-5.4 through the Emergent universal key is used server-side for interpretation, chat, and palm vision.
-- Astrology calculations are explicitly marked development/mock data until a verified astronomical engine is connected.
+- Swiss Ephemeris is the server-side calculation engine using Lahiri sidereal mode; AI receives only its structured output.
 
 ## User personas
 - Curious first-time visitor exploring a palm reading or online Kundli.
@@ -23,19 +23,26 @@ Build a production-quality, mobile-first AstroAI web application combining Vedic
 ## Implemented (2025-02-14)
 - Premium dark mystic visual system with responsive navigation and mobile layouts.
 - Email/password registration and login, JWT-protected API endpoints, and dashboard.
-- Palm upload preview, hand selection, AI service boundary, result presentation, and marked fallback.
-- Kundli form, development calculation engine, chart summary, planetary positions, dashas, yogas, and AI interpretation.
+- Palm upload preview, strict JPG/PNG/WEBP validation, hand selection, server-side GPT-5.4 vision service, result presentation, and honest 4xx/5xx failure states.
+- Kundli form, geocoded birthplace/timezone resolution, Swiss Ephemeris chart calculation, chart summary, planetary positions, houses, nakshatra, Vimshottari schedule, and chart-grounded AI interpretation.
 - Chart-grounded Ask Your Kundli chat with persisted conversation records.
 - Compatibility and pricing surfaces clearly framed as next-phase/coming soon where not connected.
 
+## Implemented (2025-02-15)
+- Full E2E verified with live GPT-5.4 (Emergent LLM key) after credit recharge — /api/kundli, /api/palm, /api/chat all return 200/422 with no 503s.
+- Mobile responsive audit — Kundli result and Home now measure clientWidth=scrollWidth at 375px (no horizontal overflow).
+- In-app toast (data-testid=`app-toast`) replaces native `alert()` for /api/kundli and /api/palm errors.
+- Signed-out palm/kundli submissions now open the Auth modal instead of failing silently.
+- Home expanded with How It Works, Compatibility teaser, Sample Reports, Pricing cards, FAQ (matches PRD sections).
+
 ## Prioritized backlog
-- P0: Connect verified astronomical/Jyotish calculation engine and validate planetary positions.
+- P0: Add ephemeris data-file management and golden chart fixtures for ongoing astronomical regression validation.
 - P0: Add secure object storage, image retention controls, account deletion, and production secret management.
 - P1: Add real location autocomplete/timezone lookup, PDF reports, Google login, and compatibility calculations.
 - P1: Add admin analytics and moderation/error observability.
 - P2: Add Stripe premium checkout and richer report history.
 
 ## Remaining next tasks
-1. Replace `AstrologyService` development seed calculations with a verified ephemeris provider.
+1. Add ephemeris data-file management and golden chart fixtures for ongoing astronomical regression validation.
 2. Add secure image storage and delete-account endpoint.
 3. Add report generation/download and real compatibility flow.

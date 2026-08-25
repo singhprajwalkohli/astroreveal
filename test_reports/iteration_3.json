@@ -1,0 +1,59 @@
+{
+  "summary": "Audited the real Swiss Ephemeris/API paths and authenticated UI. Core API validation and persistence tests mostly pass, but Kundli UI rendering crashes on the structured Nakshatra response; latest chart persistence omits interpretation, and two AI calls returned honest 503s during regression.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/kundli/latest",
+        "issue": "Latest chart documents are inserted before interpretation is added, so the persisted response has no interpretation. The endpoint also exposes internal user_id.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "/api/kundli and /api/chat",
+        "issue": "Both returned 503 during the expanded live regression (Kundli creation and chart chat). This is an honest AI-unavailable response, but it makes the live AI journey intermittently unavailable; prior iteration calls had succeeded.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "KundliResult",
+        "issue": "Authenticated Kundli generation crashes React with 'Objects are not valid as a React child' because the structured nakshatra object is passed directly to Vital, preventing the result screen from rendering.",
+        "selector": "[data-testid=kundli-engine-status]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Authenticated Kundli generation",
+        "issue": "Frontend cannot display returned real chart data because rendering fails immediately after the API response.",
+        "affected_selectors": ["[data-testid=generate-kundli-button]", "[data-testid=kundli-engine-status]", "[data-testid=kundli-interpretation]"]
+      },
+      {
+        "flow": "Saved chart hydration and View full chart",
+        "issue": "Dashboard hydration receives latest chart without interpretation, so even after the rendering crash is fixed, the saved result's AI interpretation will be blank.",
+        "affected_selectors": ["[data-testid=dashboard-view-kundli-button]", "[data-testid=kundli-interpretation]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_astroai_api.py", "/app/test_reports/pytest/pytest_results_iteration3.xml"],
+  "action_items": [
+    "Render nakshatra as a display field (for example nakshatra.name) in KundliResult rather than passing the object to React.",
+    "Persist interpretation before inserting the Kundli document, or update the inserted document after AI succeeds; return latest charts without user_id.",
+    "Investigate intermittent Emergent GPT-5.4 availability/rate-limit failures for Kundli interpretation and chart chat; keep 503 behavior honest and retest live AI flows."
+  ],
+  "critical_code_review_comments": [
+    "The API schema intentionally returns nested nakshatra data, but the UI still assumes nakshatra is a string; keep frontend rendering aligned with the structured chart contract.",
+    "The database write occurs before the AI interpretation call, creating incomplete persisted charts when AI succeeds and exposing incomplete data on latest/dashboard hydration."
+  ],
+  "updated_files": ["/app/backend/tests/test_astroai_api.py", "/app/test_reports/iteration_3.json"],
+  "success_rate": {"backend": "80% (8/10; 2 live AI 503 failures)", "frontend": "40% (homepage/auth passed; Kundli result blocked by React crash)"},
+  "seed_data_creation": "Used the provided astroai.test@example.com account and existing stored charts; the regression created additional TEST_Astro User and UI Pune Audit Kundli records. No new account or mocked API was created.",
+  "test_credentials": "astroai.test@example.com / AstroAI!2025",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Backend root/auth/protection, Swiss chart structure, persistence endpoint, chat success in prior run, and strict invalid/unsupported/oversized palm validation were exercised. Live UI stopped at KundliResult due the structured Nakshatra render crash, so palm UI and mobile overflow could not be completed in this iteration. No MOCK/fake/fallback production strings were found by source scan.",
+  "rca of the issue": "KundliService now returns nakshatra as an object with name/index/pada/lord, while App.js renders data?.nakshatra directly inside Vital; React throws during reconciliation. In server.py, result is inserted into Mongo before result['interpretation'] is assigned, so /api/kundli/latest and /api/dashboard return a chart without interpretation. The two 503 responses came from the wrapped Emergent AI call and were logged as service-unavailable rather than fabricated output."
+}
