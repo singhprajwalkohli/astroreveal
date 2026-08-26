@@ -49,6 +49,7 @@ async def ask_ai(
                     validate=True,
                 )
             except Exception as exc:
+                logger.exception("ask_ai failed: %s", exc)
                 raise AIServiceUnavailable(
                     "The uploaded image could not be processed"
                 ) from exc
