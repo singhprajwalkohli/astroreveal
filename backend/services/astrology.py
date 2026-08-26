@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -6,6 +7,14 @@ from zoneinfo import ZoneInfo
 import swisseph as swe
 from geopy.geocoders import Nominatim
 from timezonefinder import TimezoneFinder
+
+# Point pyswisseph at real ephemeris (.se1) files if you've provided them via
+# SE_EPHE_PATH. Without this, swe.calc_ut silently falls back to the lower
+# precision Moshier approximation and still returns a value — it does NOT
+# raise an exception, so this is easy to miss.
+_EPHE_PATH = os.environ.get("SE_EPHE_PATH")
+if _EPHE_PATH:
+    swe.set_ephe_path(_EPHE_PATH)
 
 
 SIGNS = ["Mesha", "Vrishabha", "Mithuna", "Karka", "Simha", "Kanya", "Tula", "Vrischika", "Dhanu", "Makara", "Kumbha", "Meena"]
@@ -113,11 +122,17 @@ class AstrologyService:
         ascendant = ascmc[0] % 360
         asc_sign = _sign(ascendant)
         planets, moon_longitude = [], None
+        used_moshier_fallback = False
         for planet_name, body in PLANETS:
             body_id, retrograde = body, False
             if planet_name == "Ketu":
                 body_id, retrograde = swe.MEAN_NODE, False
-            values, _, _ = swe.calc_ut(jd_ut, body_id, flags)
+            values, calc_flags, err = swe.calc_ut(jd_ut, body_id, flags)
+            # swe.calc_ut does NOT raise on missing ephemeris files — it
+            # silently downgrades to Moshier and only reports it in `err`
+            # and by clearing the SWIEPH bit from the returned flags.
+            if err or not (calc_flags & swe.FLG_SWIEPH):
+                used_moshier_fallback = True
             longitude_value, speed = values[0] % 360, values[3]
             if planet_name == "Ketu":
                 longitude_value = (longitude_value + 180) % 360
@@ -132,4 +147,9 @@ class AstrologyService:
             sign = _sign(cusp % 360)
             houses.append({"house": house, "cusp_longitude": round(cusp % 360, 6), "sign": sign["name"]})
         ayanamsa = swe.get_ayanamsa_ut(jd_ut)
-        return {"name": name, "dob": dob, "birth_time": birth_time, "birthplace": birthplace, "engine_status": "SWISS EPHEMERIS · LAHIRI SIDEREAL", "calculation_system": "Vedic sidereal zodiac with Lahiri ayanamsa and whole-sign houses", "location": location, "coordinates": {"latitude": location["latitude"], "longitude": location["longitude"], "timezone": location["timezone"]}, "utc_datetime": birth_utc.isoformat(), "julian_day_ut": round(jd_ut, 8), "ayanamsa_degrees": round(ayanamsa, 8), "lagna": asc_sign["name"], "lagna_longitude": round(ascendant, 6), "rashi": _sign(moon_longitude)["name"], "nakshatra": _nakshatra(moon_longitude), "planets": planets, "houses": houses, "dashas": _dasha_schedule(moon_longitude, birth_local), "yogas": []}
+        engine_status = (
+            "MOSHIER APPROXIMATION · LAHIRI SIDEREAL (ephemeris files not found on server)"
+            if used_moshier_fallback
+            else "SWISS EPHEMERIS · LAHIRI SIDEREAL"
+        )
+        return {"name": name, "dob": dob, "birth_time": birth_time, "birthplace": birthplace, "engine_status": engine_status, "calculation_system": "Vedic sidereal zodiac with Lahiri ayanamsa and whole-sign houses", "location": location, "coordinates": {"latitude": location["latitude"], "longitude": location["longitude"], "timezone": location["timezone"]}, "utc_datetime": birth_utc.isoformat(), "julian_day_ut": round(jd_ut, 8), "ayanamsa_degrees": round(ayanamsa, 8), "lagna": asc_sign["name"], "lagna_longitude": round(ascendant, 6), "rashi": _sign(moon_longitude)["name"], "nakshatra": _nakshatra(moon_longitude), "planets": planets, "houses": houses, "dashas": _dasha_schedule(moon_longitude, birth_local), "yogas": []}
