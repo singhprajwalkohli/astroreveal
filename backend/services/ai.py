@@ -1,5 +1,7 @@
 import os
 import base64
+import logging
+logger = logging.getLogger(__name__)
 
 from google import genai
 from google.genai import types
