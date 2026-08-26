@@ -3,6 +3,7 @@ import axios from "axios";
 import { Sparkles, Moon, Sun, ArrowRight, Upload, MessageCircle, ShieldCheck, Stars, LogOut, UserRound, ChevronRight, Check, Menu, X, HelpCircle, FileText, Heart, MapPin, Lock } from "lucide-react";
 import "@/App.css";
 
+if (!process.env.REACT_APP_BACKEND_URL) { console.error(...) }
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const api = axios.create({ baseURL: API });
 const img = { cosmos: "https://images.unsplash.com/photo-1528722828814-77b9b83aafb2?auto=format&fit=crop&w=1800&q=85", palm: "https://images.pexels.com/photos/6642895/pexels-photo-6642895.jpeg?auto=compress&cs=tinysrgb&w=900", chart: "https://images.unsplash.com/photo-1729335511904-9b8690184935?auto=format&fit=crop&w=900&q=85" };
