@@ -16,8 +16,15 @@ from services.payments import (
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
-def _required_env(name: str) -> str: value = os.environ.get(name) if not value: raise RuntimeError(f"Required environment variable {name} is not set. Set it in Railway's Variables tab.") 
-return value client = AsyncIOMotorClient(_required_env("MONGO_URL"))
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Required environment variable {name} is not set. Set it in Railway's Variables tab.")
+    return value
+
+client = AsyncIOMotorClient(_required_env("MONGO_URL"))
+db = client[_required_env("DB_NAME")]
+
 db = client[_required_env("DB_NAME")]
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET = os.environ.get("JWT_SECRET", "astroai-local-secret")
