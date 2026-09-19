@@ -103,7 +103,9 @@ def _apply_palm_entitlement(doc: dict, ent: dict) -> dict:
 
 @api.get("/")
 async def root(): return {"message": "AstroAI API ready"}
-@app.get("/") async def health(): return {"status": "ok"}
+
+@app.get("/")
+async def health(): return {"status": "ok"}
     
 @api.get("/geocode/search")
 async def geocode_search(q: str):
