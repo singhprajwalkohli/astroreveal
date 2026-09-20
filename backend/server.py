@@ -28,7 +28,7 @@ db = client[_required_env("DB_NAME")]
 db = client[_required_env("DB_NAME")]
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET = os.environ.get("JWT_SECRET", "astroai-local-secret")
-app = FastAPI(title="AstroAI API")
+app = FastAPI(title="AstroReveal API")
 api = APIRouter(prefix="/api")
 astrology = AstrologyService()
 payments = PaymentService()
@@ -102,7 +102,7 @@ def _apply_palm_entitlement(doc: dict, ent: dict) -> dict:
     return doc
 
 @api.get("/")
-async def root(): return {"message": "AstroAI API ready"}
+async def root(): return {"message": "AstroReveal API ready"}
 
 @app.get("/")
 async def health(): return {"status": "ok"}
