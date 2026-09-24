@@ -92,3 +92,12 @@
 .pay-status-fail{color:#efaa9d}
 .pay-note code{background:#0c1422;border:1px solid var(--line);padding:2px 6px;font-size:11px;color:var(--gold2)}
 
+
+.kundli-form select,.chat-card select{background:#0c1422;border:1px solid var(--line);color:var(--text);padding:14px;outline:0;width:100%;font-size:12px}
+.kundli-form select:focus,.chat-card select:focus{border-color:var(--gold)}
+.kundli-form .consent-row{display:flex;align-items:flex-start;gap:10px;grid-column:1/-1;line-height:1.5}
+.kundli-form .consent-row input{width:auto;margin-top:2px}
+.chat-card .chat-for{display:grid;gap:8px;margin-top:20px;color:var(--muted);font-size:11px}
+
+.or-divider{text-align:center;color:var(--muted);font-size:11px;margin:18px 0 14px}
+.google-btn-wrap{display:flex;justify-content:center;min-height:44px}

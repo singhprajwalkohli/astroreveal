@@ -7,6 +7,20 @@ from google import genai
 from google.genai import types
 
 
+# Fields the model does not need. Interpretation works from planets, houses, nakshatras
+# and dashas that the server already calculated, so identity and birth-place details are
+# not sent to the third-party AI provider. (Dasha dates can still imply a birth date.)
+_NOT_SENT_TO_LLM = {
+    "interpretation", "user_id", "id", "created_at", "unlocked", "_id",
+    "name", "dob", "birth_time", "birthplace", "location", "coordinates",
+    "utc_datetime", "julian_day_ut",
+}
+
+
+def chart_for_llm(kundli: dict) -> dict:
+    return {k: v for k, v in kundli.items() if k not in _NOT_SENT_TO_LLM}
+
+
 class AIServiceUnavailable(Exception):
     pass
 
@@ -174,16 +188,7 @@ Do not present palmistry as scientific fact.
 class AstrologyInterpretationService:
 
     async def interpret(self, kundli: dict):
-        calculation = {
-            key: value
-            for key, value in kundli.items()
-            if key not in {
-                "interpretation",
-                "user_id",
-                "id",
-                "created_at",
-            }
-        }
+        calculation = chart_for_llm(kundli)
 
         prompt = f"""
 Interpret ONLY the following server-calculated Vedic
@@ -261,16 +266,7 @@ class KundliChatService:
         question: str,
         kundli: dict,
     ):
-        calculation = {
-            key: value
-            for key, value in kundli.items()
-            if key not in {
-                "interpretation",
-                "user_id",
-                "id",
-                "created_at",
-            }
-        }
+        calculation = chart_for_llm(kundli)
 
         prompt = f"""
 Answer the user's question using ONLY the following
@@ -283,6 +279,10 @@ User question:
 {question}
 
 Do not invent or estimate planetary positions.
+
+This chart belongs to ONE person. If the question is about
+any other person, say you can only answer about this chart and
+that other people need their own Kundli.
 
 If the question cannot be answered using the supplied
 chart data, clearly say so.
