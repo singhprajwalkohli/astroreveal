@@ -44,6 +44,11 @@ MAX_PROFILES = int(os.environ.get("MAX_PROFILES", "5"))
 # Google sign-in is optional: with no client id set, the endpoint answers 503 and the button stays hidden.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 _IDENTITY = ("name", "dob", "birth_time", "birthplace")
+# Correcting a typo in birth details is free for a short window after a Kundli is unlocked,
+# and only a couple of times, because every correction re-runs the paid AI interpretation.
+EDIT_WINDOW_HOURS = int(os.environ.get("EDIT_WINDOW_HOURS", "48"))
+MAX_FREE_EDITS = int(os.environ.get("MAX_FREE_EDITS", "2"))
+_BIRTH_FIELDS = ("dob", "birth_time", "birthplace", "latitude", "longitude", "timezone_name")
 
 class AuthInput(BaseModel):
     email: EmailStr
@@ -60,6 +65,8 @@ class ProfileInput(BirthDetails):
     consent_confirmed: bool = False
 class PalmInput(BaseModel):
     image_base64: str; hand: Literal["left", "right", "both"]
+class ProfileEdit(ProfileInput):
+    confirm_spend: bool = False   # must be true before a correction that costs a credit
 class ChatInput(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     profile_id: str | None = None
@@ -256,7 +263,7 @@ async def _unlock_chart(user_id: str, chart: dict) -> dict:
         text = await AstrologyInterpretationService().interpret(chart)
         res = await db.kundlis.update_one(
             {"id": chart["id"], "user_id": user_id, "unlocked": {"$ne": True}},
-            {"$set": {"interpretation": text, "unlocked": True}},
+            {"$set": {"interpretation": text, "unlocked": True, "unlocked_at": now_iso()}},
         )
         if res.matched_count == 0:  # another request unlocked it first: don't charge twice
             raise HTTPException(409, "This Kundli was already unlocked")
@@ -298,6 +305,7 @@ async def create_kundli(data: ProfileInput, user=Depends(current_user)):
     try:
         chart_doc["interpretation"] = await credits.spend(db, uid, "kundli", interpret)
         chart_doc["unlocked"] = True
+        chart_doc["unlocked_at"] = now_iso()
     except credits.InsufficientCredits:
         chart_doc["interpretation"] = _teaser(chart_doc)
         chart_doc["unlocked"] = False
@@ -342,6 +350,105 @@ async def _profiles_view(user_id: str) -> list[dict]:
 @api.get("/profiles")
 async def list_profiles(user=Depends(current_user)):
     return {"profiles": await _profiles_view(user["id"]), "max_profiles": MAX_PROFILES}
+
+def _free_edit_status(chart: dict | None) -> tuple[bool, str | None]:
+    """Would correcting this chart's birth details be free right now? Returns (free, free_until)."""
+    if not chart or not chart.get("unlocked"):
+        return True, None          # no paid reading exists yet: recalculating costs us nothing
+    started = chart.get("unlocked_at") or chart.get("created_at") or now_iso()
+    try:
+        t0 = datetime.fromisoformat(started)
+        if t0.tzinfo is None: t0 = t0.replace(tzinfo=timezone.utc)
+    except ValueError:
+        t0 = datetime.now(timezone.utc) - timedelta(days=365)
+    until = t0 + timedelta(hours=EDIT_WINDOW_HOURS)
+    free = datetime.now(timezone.utc) < until and int(chart.get("free_edits_used") or 0) < MAX_FREE_EDITS
+    return free, until.isoformat()
+
+async def _latest_chart(user_id: str, profile_id: str) -> dict | None:
+    return await db.kundlis.find_one({"user_id": user_id, "profile_id": profile_id}, {"_id": 0}, sort=[("created_at", -1)])
+
+@api.get("/profiles/{profile_id}")
+async def get_profile(profile_id: str, user=Depends(current_user)):
+    """Full details of one saved person (owner only), used to pre-fill the edit form."""
+    profile = await db.profiles.find_one({"id": profile_id, "user_id": user["id"]}, {"_id": 0, "user_id": 0})
+    if not profile: raise HTTPException(404, "Profile not found")
+    chart = await _latest_chart(user["id"], profile_id)
+    free, until = _free_edit_status(chart)
+    return {**profile, "has_kundli": chart is not None, "unlocked": bool(chart and chart.get("unlocked")),
+            "edit_free": free, "edit_free_until": until if chart and chart.get("unlocked") else None}
+
+@api.put("/profiles/{profile_id}")
+async def edit_profile(profile_id: str, data: ProfileEdit, user=Depends(current_user)):
+    """Correct a saved person. Name/relation changes are always free. Changing birth details
+    recalculates the chart: free for a preview, free for a short window after unlocking
+    (limited times), otherwise it costs one Kundli credit and needs confirm_spend=true."""
+    uid = user["id"]
+    profile = await db.profiles.find_one({"id": profile_id, "user_id": uid}, {"_id": 0})
+    if not profile: raise HTTPException(404, "Profile not found")
+
+    name = data.name.strip()
+    if await db.profiles.find_one({"user_id": uid, "id": {"$ne": profile_id}, "name": name, "dob": data.dob,
+                                   "birth_time": data.birth_time, "birthplace": data.birthplace}, {"_id": 0, "id": 1}):
+        raise HTTPException(409, "You already have this person saved.")
+    if data.relation == "self" and data.relation != profile["relation"]:
+        if await db.profiles.find_one({"user_id": uid, "relation": "self", "id": {"$ne": profile_id}}, {"_id": 0, "id": 1}):
+            raise HTTPException(409, "You already have a profile for yourself. Choose another relation.")
+    consented = data.relation == "self" or bool(profile.get("consent_confirmed")) or data.consent_confirmed
+    if not consented:
+        raise HTTPException(400, "Please confirm you have this person's permission, or that you are their parent or legal guardian.")
+
+    new_birth = {"dob": data.dob, "birth_time": data.birth_time, "birthplace": data.birthplace,
+                 "latitude": data.latitude, "longitude": data.longitude, "timezone_name": data.timezone_name}
+    birth_changed = any(new_birth[f] != profile.get(f) for f in _BIRTH_FIELDS)
+    now = now_iso()
+    profile_update = {"name": name, "relation": data.relation, "updated_at": now, **new_birth}
+    if data.relation != "self" and not profile.get("consent_confirmed"):
+        profile_update.update(consent_confirmed=True, consent_at=now)
+    chart = await _latest_chart(uid, profile_id)
+
+    if not birth_changed or chart is None:
+        await db.profiles.update_one({"id": profile_id, "user_id": uid}, {"$set": profile_update})
+        if chart is not None:   # only the name/relation changed, so the chart itself stays as it is
+            await db.kundlis.update_one({"id": chart["id"], "user_id": uid}, {"$set": {"name": name}})
+            chart = {**chart, "name": name}
+        return {"profile_id": profile_id, "kundli": _public_chart(chart) if chart else None, "charged": False}
+
+    free, _ = _free_edit_status(chart)
+    if chart.get("unlocked") and not free and not data.confirm_spend:
+        raise HTTPException(409, "Correcting birth details now costs 1 Kundli credit. Please confirm to continue.")
+    try:
+        result = await astrology.calculate_kundli(name=name, **new_birth)
+    except AstrologyCalculationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    new_chart = {**result, "id": chart["id"], "user_id": uid, "profile_id": profile_id, "created_at": chart["created_at"]}
+
+    async def save(extra: dict):
+        new_chart.update(extra)
+        await db.kundlis.replace_one({"id": chart["id"], "user_id": uid}, dict(new_chart))
+        await db.profiles.update_one({"id": profile_id, "user_id": uid}, {"$set": profile_update})
+
+    charged = False
+    try:
+        if not chart.get("unlocked"):                       # free preview: recalculate, no AI, no cost
+            await save({"interpretation": _teaser(new_chart), "unlocked": False})
+        elif free:                                          # free correction inside the window
+            async def free_edit():
+                text = await AstrologyInterpretationService().interpret(new_chart)
+                await save({"interpretation": text, "unlocked": True, "unlocked_at": chart.get("unlocked_at") or chart["created_at"],
+                            "free_edits_used": int(chart.get("free_edits_used") or 0) + 1})
+            await free_edit()
+        else:                                               # paid correction: a new reading with a fresh window
+            async def paid_edit():
+                text = await AstrologyInterpretationService().interpret(new_chart)
+                await save({"interpretation": text, "unlocked": True, "unlocked_at": now_iso(), "free_edits_used": 0})
+            await credits.spend(db, uid, "kundli", paid_edit)
+            charged = True
+    except credits.InsufficientCredits as exc:
+        raise _payment_required(exc) from exc
+    except AIServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"profile_id": profile_id, "kundli": _public_chart(new_chart), "charged": charged}
 
 @api.delete("/profiles/{profile_id}")
 async def delete_profile(profile_id: str, user=Depends(current_user)):
