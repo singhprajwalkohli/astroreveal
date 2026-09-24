@@ -43,6 +43,9 @@ KUNDLI_MAX_PER_DAY = int(os.environ.get("KUNDLI_MAX_PER_DAY", "10"))
 MAX_PROFILES = int(os.environ.get("MAX_PROFILES", "5"))
 # Google sign-in is optional: with no client id set, the endpoint answers 503 and the button stays hidden.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+# Automatic deletion of long-inactive accounts. OFF by default: while off, it only logs what it WOULD delete.
+RETENTION_ENABLED = os.environ.get("RETENTION_ENABLED", "false").strip().lower() == "true"
+RETENTION_DAYS = max(int(os.environ.get("RETENTION_DAYS", "730")), 90)   # never less than 90 days
 _IDENTITY = ("name", "dob", "birth_time", "birthplace")
 # Correcting a typo in birth details is free for a short window after a Kundli is unlocked,
 # and only a couple of times, because every correction re-runs the paid AI interpretation.
@@ -70,6 +73,8 @@ class ProfileEdit(ProfileInput):
 class ChatInput(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     profile_id: str | None = None
+class AccountDelete(BaseModel):
+    confirm: str
 class GoogleInput(BaseModel):
     credential: str = Field(min_length=20, max_length=4096)
 class OrderInput(BaseModel):
@@ -162,7 +167,7 @@ async def geocode_search(q: str):
 @api.post("/auth/register")
 async def register(data: AuthInput):
     if await db.users.find_one({"email": data.email.lower()}): raise HTTPException(409, "An account with this email already exists")
-    user = {"id": str(uuid.uuid4()), "email": data.email.lower(), "password_hash": pwd.hash(data.password), "created_at": now_iso()}
+    user = {"id": str(uuid.uuid4()), "email": data.email.lower(), "password_hash": pwd.hash(data.password), "created_at": now_iso(), "last_active_at": now_iso()}
     await db.users.insert_one(user)
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
 
@@ -172,6 +177,7 @@ async def login(data: AuthInput):
     if user and not user.get("password_hash"):
         raise HTTPException(401, "This email uses Google sign-in. Please use the Google button.")
     if not user or not pwd.verify(data.password, user["password_hash"]): raise HTTPException(401, "Email or password is incorrect")
+    await touch_user(user["id"])
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
 
 def _verify_google_credential(credential: str) -> dict:
@@ -203,9 +209,66 @@ async def google_login(data: GoogleInput):
             # so a squatter who registered first cannot keep access to it.
             await db.users.update_one({"id": user["id"]}, {"$set": {"google_sub": sub}, "$unset": {"password_hash": ""}})
         else:
-            user = {"id": str(uuid.uuid4()), "email": email, "google_sub": sub, "created_at": now_iso()}
+            user = {"id": str(uuid.uuid4()), "email": email, "google_sub": sub, "created_at": now_iso(), "last_active_at": now_iso()}
             await db.users.insert_one(dict(user))
+    await touch_user(user["id"])
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
+
+async def touch_user(user_id: str) -> None:
+    """Record activity at most once a day (used only to decide when an abandoned account can be deleted)."""
+    day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    await db.users.update_one(
+        {"id": user_id, "$or": [{"last_active_at": {"$exists": False}}, {"last_active_at": {"$lt": day_ago}}]},
+        {"$set": {"last_active_at": now_iso()}})
+
+async def erase_user(user_id: str) -> dict:
+    """Delete everything personal about a user. Payment order records (amount, date, Razorpay ids;
+    no name or email) are kept for accounting, but the raw payment-webhook copies, which contain the
+    customer's contact details, are deleted."""
+    order_ids = [o["razorpay_order_id"] async for o in db.orders.find({"user_id": user_id}, {"_id": 0, "razorpay_order_id": 1})]
+    counts: dict[str, int] = {}
+    for label, coll in (("kundlis", db.kundlis), ("profiles", db.profiles), ("palm_readings", db.palm_readings),
+                        ("ai_conversations", db.ai_conversations), ("credit_grants", db.credit_grants)):
+        counts[label] = (await coll.delete_many({"user_id": user_id})).deleted_count
+    if order_ids:
+        res = await db.payment_events.delete_many({"$or": [{"raw.payload.payment.entity.order_id": {"$in": order_ids}},
+                                                           {"raw.payload.order.entity.id": {"$in": order_ids}}]})
+        counts["payment_events"] = res.deleted_count
+    await db.users.delete_one({"id": user_id})
+    return counts
+
+async def purge_inactive_accounts(dry_run: bool) -> list[str]:
+    """Find (and, unless dry_run, erase) accounts with no activity for RETENTION_DAYS."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+    query = {"$or": [{"last_active_at": {"$lt": cutoff}},
+                     {"last_active_at": {"$exists": False}, "created_at": {"$lt": cutoff}}]}
+    ids = [u["id"] async for u in db.users.find(query, {"_id": 0, "id": 1})]
+    if not dry_run:
+        for uid in ids:
+            await erase_user(uid)
+    return ids
+
+async def _retention_loop():
+    log = logging.getLogger("uvicorn.error")
+    await asyncio.sleep(300)
+    while True:
+        try:
+            ids = await purge_inactive_accounts(dry_run=not RETENTION_ENABLED)
+            if ids:
+                log.warning("Retention: %s %d account(s) inactive for %d+ days",
+                            "deleted" if RETENTION_ENABLED else "WOULD delete (dry run)", len(ids), RETENTION_DAYS)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("Retention job failed: %r", exc)
+        await asyncio.sleep(24 * 3600)
+
+@api.post("/account/delete")
+async def delete_account(data: AccountDelete, user=Depends(current_user)):
+    """Permanently delete the signed-in account and everything stored about it."""
+    if data.confirm != "DELETE":
+        raise HTTPException(400, "Type DELETE to confirm")
+    return {"deleted": True, **(await erase_user(user["id"]))}
 
 @api.get("/auth/me")
 async def me(user=Depends(current_user)): return user
@@ -526,6 +589,7 @@ async def chat(data: ChatInput, user=Depends(current_user)):
 
 @api.get("/dashboard")
 async def dashboard(user=Depends(current_user)):
+    await touch_user(user["id"])
     profiles = await _profiles_view(user["id"])  # first: adopts pre-profile Kundlis
     kundli = await db.kundlis.find_one({"user_id": user["id"]}, {"_id": 0, "user_id": 0}, sort=[("created_at", -1)])
     palms = await db.palm_readings.count_documents({"user_id": user["id"]})
@@ -661,5 +725,9 @@ async def startup():
         await credits.ensure_indexes(db)
     except Exception as exc:
         logging.getLogger("uvicorn.error").error("Could not create credit_grants indexes: %r", exc)
+    app.state.retention_task = asyncio.create_task(_retention_loop())
 @app.on_event("shutdown")
-async def shutdown(): client.close()
+async def shutdown():
+    task = getattr(app.state, "retention_task", None)
+    if task: task.cancel()
+    client.close()
