@@ -101,3 +101,12 @@
 
 .or-divider{text-align:center;color:var(--muted);font-size:11px;margin:18px 0 14px}
 .google-btn-wrap{display:flex;justify-content:center;min-height:44px}
+
+.people-card{grid-column:span 2}
+.people-list{list-style:none;margin:22px 0 0;padding:0;display:grid;gap:2px}
+.people-list li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0;border-top:1px solid var(--line)}
+.people-list li b{display:block;font-weight:500}
+.people-list li small{color:var(--muted);font-size:11px;text-transform:capitalize}
+.people-actions{display:flex;gap:18px}
+.text-btn.danger{color:#d68b8b}
+.form-foot .ghost-btn{margin-left:12px}
