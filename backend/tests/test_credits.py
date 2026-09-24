@@ -55,7 +55,7 @@ def env(monkeypatch):
     monkeypatch.setattr(server.PalmReadingService, "analyze", fake_palm)
 
     client = TestClient(server.app)
-    r = client.post("/api/auth/register", json={"email": "a@b.com", "password": "secret1"})
+    r = client.post("/api/auth/register", json={"email": "a@b.com", "password": "secret12"})
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
     uid = r.json()["user"]["id"]
     return client, db, headers, uid, calls
@@ -198,3 +198,24 @@ def test_verify_and_webhook_grant_exactly_once(env, monkeypatch):
     wsig = hmac.new(b"wsecret", raw, hashlib.sha256).hexdigest()
     client.post("/api/payments/webhook", content=raw, headers={"x-razorpay-signature": wsig})  # webhook after verify
     assert client.get("/api/entitlements", headers=h).json()["credits"]["palm"] == 1  # still one credit, not three
+
+
+def test_api_still_starts_if_index_creation_fails(monkeypatch):
+    """Regression: a database error while creating indexes crashed the whole app on Railway."""
+    from pymongo.errors import OperationFailure
+    monkeypatch.setattr(server, "db", AsyncMongoMockClient()["t"])
+
+    async def boom(db):
+        raise OperationFailure("simulated: not authorized to create indexes")
+    monkeypatch.setattr(credits, "ensure_indexes", boom)
+    with TestClient(server.app) as client:      # `with` runs the real startup/shutdown events
+        assert client.get("/api/").status_code == 200
+
+
+def test_startup_creates_indexes_normally(monkeypatch):
+    db = AsyncMongoMockClient()["t"]
+    monkeypatch.setattr(server, "db", db)
+    with TestClient(server.app) as client:
+        assert client.get("/api/").status_code == 200
+    names = asyncio.get_event_loop().run_until_complete(db.credit_grants.index_information())
+    assert any("razorpay_order_id" in n for n in names)

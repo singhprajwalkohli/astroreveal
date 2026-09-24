@@ -45,7 +45,7 @@ def env(monkeypatch):
     client = TestClient(server.app)
 
     def user(email):
-        r = client.post("/api/auth/register", json={"email": email, "password": "secret1"})
+        r = client.post("/api/auth/register", json={"email": email, "password": "secret12"})
         return {"Authorization": f"Bearer {r.json()['token']}"}, r.json()["user"]["id"]
     return client, db, user
 
@@ -87,7 +87,7 @@ def test_delete_account_removes_the_user_and_only_the_user(env):
     assert counts(db, ub) == before_b and run(db.payment_events.count_documents({"event_id": "e" + ub})) == 1
     # A's token no longer works, and the email can be registered again
     assert client.get("/api/auth/me", headers=ha).status_code == 401
-    assert client.post("/api/auth/register", json={"email": "a@b.com", "password": "secret1"}).status_code == 200
+    assert client.post("/api/auth/register", json={"email": "a@b.com", "password": "secret12"}).status_code == 200
 
 
 def test_delete_needs_the_exact_confirmation(env):
@@ -105,7 +105,7 @@ def test_activity_is_recorded_at_most_once_a_day(env):
     h, uid = user("a@b.com")
     assert run(db.users.find_one({"id": uid}))["last_active_at"]
     run(db.users.update_one({"id": uid}, {"$set": {"last_active_at": ago(3)}}))
-    client.post("/api/auth/login", json={"email": "a@b.com", "password": "secret1"})
+    client.post("/api/auth/login", json={"email": "a@b.com", "password": "secret12"})
     refreshed = run(db.users.find_one({"id": uid}))["last_active_at"]
     assert refreshed > ago(1)
     client.get("/api/dashboard", headers=h)          # same day: no rewrite

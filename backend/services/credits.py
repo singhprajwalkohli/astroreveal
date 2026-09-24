@@ -78,6 +78,13 @@ async def consume(db, user_id: str, kind: str) -> str | None:
     return grant["id"] if grant else None
 
 
+async def has_credit(db, user_id: str, kind: str) -> bool:
+    """Read-only: does the user have at least one valid credit? (Does not spend it.)"""
+    doc = await db.credit_grants.find_one(
+        {"user_id": user_id, "kind": kind, "remaining": {"$gt": 0}, "expires_at": {"$gt": _now()}}, {"_id": 1})
+    return doc is not None
+
+
 async def refund(db, grant_id: str) -> None:
     await db.credit_grants.update_one({"id": grant_id}, {"$inc": {"remaining": 1}})
 

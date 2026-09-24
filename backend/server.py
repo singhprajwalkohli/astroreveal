@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
@@ -29,6 +31,7 @@ db = client[_required_env("DB_NAME")]
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # No fallback: a default secret in a public repo lets anyone forge login tokens.
 SECRET = _required_env("JWT_SECRET")
+_DUMMY_HASH = pwd.hash("not-a-real-password")   # lets us spend the same time on unknown emails as on real ones
 app = FastAPI(title="AstroReveal API")
 api = APIRouter(prefix="/api")
 astrology = AstrologyService()
@@ -41,6 +44,14 @@ CHAT_MAX_PER_WINDOW = int(os.environ.get("CHAT_MAX_PER_WINDOW", "8"))
 CHAT_WINDOW_MINUTES = int(os.environ.get("CHAT_WINDOW_MINUTES", "5"))
 KUNDLI_MAX_PER_DAY = int(os.environ.get("KUNDLI_MAX_PER_DAY", "10"))
 MAX_PROFILES = int(os.environ.get("MAX_PROFILES", "5"))
+# Sign-in protection. Per-EMAIL limits are strict (they stop password guessing on one account and cannot be
+# dodged by changing IP). Per-IP limits are generous on purpose: behind some proxies many real users can share one IP.
+LOGIN_FAILS_PER_EMAIL = int(os.environ.get("LOGIN_FAILS_PER_EMAIL", "5"))
+LOGIN_FAILS_PER_IP = int(os.environ.get("LOGIN_FAILS_PER_IP", "60"))
+GOOGLE_FAILS_PER_IP = int(os.environ.get("GOOGLE_FAILS_PER_IP", "60"))
+REGISTER_PER_IP_PER_HOUR = int(os.environ.get("REGISTER_PER_IP_PER_HOUR", "20"))
+AUTH_WINDOW_MINUTES = 15
+MAX_BODY_BYTES = 14 * 1024 * 1024   # a 10 MB palm photo becomes ~13.4 MB once base64-encoded
 # Google sign-in is optional: with no client id set, the endpoint answers 503 and the button stays hidden.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 # Automatic deletion of long-inactive accounts. OFF by default: while off, it only logs what it WOULD delete.
@@ -53,9 +64,12 @@ EDIT_WINDOW_HOURS = int(os.environ.get("EDIT_WINDOW_HOURS", "48"))
 MAX_FREE_EDITS = int(os.environ.get("MAX_FREE_EDITS", "2"))
 _BIRTH_FIELDS = ("dob", "birth_time", "birthplace", "latitude", "longitude", "timezone_name")
 
-class AuthInput(BaseModel):
+class AuthInput(BaseModel):      # login: no minimum, so people with older short passwords can still sign in
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=1, max_length=128)
+class RegisterInput(BaseModel):  # new accounts need a stronger password
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
 RelationType = Literal["self", "spouse", "parent", "child", "sibling", "friend", "other"]
 class BirthDetails(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -165,18 +179,32 @@ async def geocode_search(q: str):
     return {"results": results}
 
 @api.post("/auth/register")
-async def register(data: AuthInput):
+async def register(data: RegisterInput, request: Request):
+    ip = client_ip(request)
+    if await _recent_attempts("register_ip", ip, 60) >= REGISTER_PER_IP_PER_HOUR:
+        raise _too_many_attempts(60)
+    await _note_attempt("register_ip", ip)
     if await db.users.find_one({"email": data.email.lower()}): raise HTTPException(409, "An account with this email already exists")
     user = {"id": str(uuid.uuid4()), "email": data.email.lower(), "password_hash": pwd.hash(data.password), "created_at": now_iso(), "last_active_at": now_iso()}
     await db.users.insert_one(user)
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
 
 @api.post("/auth/login")
-async def login(data: AuthInput):
-    user = await db.users.find_one({"email": data.email.lower()})
+async def login(data: AuthInput, request: Request):
+    email, ip = data.email.lower(), client_ip(request)
+    if (await _recent_attempts("login_fail_email", email, AUTH_WINDOW_MINUTES) >= LOGIN_FAILS_PER_EMAIL
+            or await _recent_attempts("login_fail_ip", ip, AUTH_WINDOW_MINUTES) >= LOGIN_FAILS_PER_IP):
+        raise _too_many_attempts()
+    user = await db.users.find_one({"email": email})
     if user and not user.get("password_hash"):
         raise HTTPException(401, "This email uses Google sign-in. Please use the Google button.")
-    if not user or not pwd.verify(data.password, user["password_hash"]): raise HTTPException(401, "Email or password is incorrect")
+    password_ok = pwd.verify(data.password, user["password_hash"] if user else _DUMMY_HASH) and user is not None
+    if not password_ok:
+        # failures are counted for unknown emails too, so the response never reveals whether an account exists
+        await _note_attempt("login_fail_email", email)
+        await _note_attempt("login_fail_ip", ip)
+        raise HTTPException(401, "Email or password is incorrect")
+    await db.auth_attempts.delete_many({"kind": "login_fail_email", "key": email})
     await touch_user(user["id"])
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
 
@@ -187,12 +215,16 @@ def _verify_google_credential(credential: str) -> dict:
     return id_token.verify_oauth2_token(credential, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
 
 @api.post("/auth/google")
-async def google_login(data: GoogleInput):
+async def google_login(data: GoogleInput, request: Request):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(503, "Google sign-in is not configured yet")
+    ip = client_ip(request)
+    if await _recent_attempts("google_fail_ip", ip, AUTH_WINDOW_MINUTES) >= GOOGLE_FAILS_PER_IP:
+        raise _too_many_attempts()
     try:
         claims = await asyncio.to_thread(_verify_google_credential, data.credential)
     except Exception:
+        await _note_attempt("google_fail_ip", ip)
         raise HTTPException(401, "Google sign-in could not be verified. Please try again.")
     sub, email = claims.get("sub"), (claims.get("email") or "").lower()
     if not sub or not email or claims.get("email_verified") is not True:
@@ -213,6 +245,26 @@ async def google_login(data: GoogleInput):
             await db.users.insert_one(dict(user))
     await touch_user(user["id"])
     return {"token": token_for(user["id"]), "user": {"id": user["id"], "email": user["email"]}}
+
+def client_ip(request: Request) -> str:
+    """Best-effort visitor IP behind a proxy: the last X-Forwarded-For entry is the one our own proxy added."""
+    fwd = (request.headers.get("x-forwarded-for") or "").strip()
+    if fwd:
+        return fwd.split(",")[-1].strip()
+    real = (request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real
+    return request.client.host if request.client else "unknown"
+
+async def _recent_attempts(kind: str, key: str, minutes: int) -> int:
+    since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    return await db.auth_attempts.count_documents({"kind": kind, "key": key, "at": {"$gte": since}})
+
+async def _note_attempt(kind: str, key: str) -> None:
+    await db.auth_attempts.insert_one({"kind": kind, "key": key, "at": datetime.now(timezone.utc)})
+
+def _too_many_attempts(minutes: int = AUTH_WINDOW_MINUTES) -> HTTPException:
+    return HTTPException(429, f"Too many attempts. Please wait {minutes} minutes and try again.", headers={"Retry-After": str(minutes * 60)})
 
 async def touch_user(user_id: str) -> None:
     """Record activity at most once a day (used only to decide when an abandoned account can be deleted)."""
@@ -526,6 +578,8 @@ async def delete_profile(profile_id: str, user=Depends(current_user)):
 
 @api.post("/palm")
 async def palm(data: PalmInput, user=Depends(current_user)):
+    if not await credits.has_credit(db, user["id"], "palm"):
+        raise _payment_required(credits.InsufficientCredits("palm"))    # cheap check first, before any image work
     match = re.match(r"^data:(image/(?:jpeg|png|webp));base64,(.+)$", data.image_base64, re.DOTALL)
     if not match:
         raise HTTPException(400, "Please upload a JPG, PNG, or WEBP image")
@@ -614,6 +668,7 @@ async def payments_config():
 async def create_payment_order(data: OrderInput, user=Depends(current_user)):
     if not is_valid_product(data.product):
         raise HTTPException(400, "Unknown product")
+    await _rate_limit(db.orders, user["id"], 20, timedelta(hours=1), "Too many payment attempts. Please try again later.")
     if not payments.configured:
         raise HTTPException(503, "Razorpay is not configured on the server. Ask the administrator to set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET.")
     try:
@@ -715,6 +770,21 @@ async def list_orders(user=Depends(current_user)):
     docs = await db.orders.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(50)
     return {"orders": docs}
 
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    """Always answer with a plain-text message (the website shows it as-is; a list would crash the page)."""
+    first = (exc.errors() or [{}])[0]
+    field = ".".join(str(x) for x in first.get("loc", ()) if x not in ("body", "query"))
+    msg = str(first.get("msg", "Invalid input")).replace("Value error, ", "")
+    return JSONResponse(status_code=422, content={"detail": f"{field}: {msg}" if field else msg})
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    length = request.headers.get("content-length")
+    if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "Request is too large"})
+    return await call_next(request)
+
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "https://www.astroreveal.in,https://astroreveal.in").split(",") if o.strip()], allow_methods=["*"], allow_headers=["*"])
 @app.on_event("startup")
@@ -725,6 +795,11 @@ async def startup():
         await credits.ensure_indexes(db)
     except Exception as exc:
         logging.getLogger("uvicorn.error").error("Could not create credit_grants indexes: %r", exc)
+    try:
+        await db.auth_attempts.create_index("at", expireAfterSeconds=24 * 3600)
+        await db.auth_attempts.create_index([("kind", 1), ("key", 1), ("at", 1)])
+    except Exception as exc:
+        logging.getLogger("uvicorn.error").error("Could not create auth_attempts indexes: %r", exc)
     app.state.retention_task = asyncio.create_task(_retention_loop())
 @app.on_event("shutdown")
 async def shutdown():

@@ -52,7 +52,7 @@ def env(monkeypatch):
     client = TestClient(server.app)
 
     def user(email):
-        r = client.post("/api/auth/register", json={"email": email, "password": "secret1"})
+        r = client.post("/api/auth/register", json={"email": email, "password": "secret12"})
         return {"Authorization": f"Bearer {r.json()['token']}"}, r.json()["user"]["id"]
 
     return client, db, seen, user
