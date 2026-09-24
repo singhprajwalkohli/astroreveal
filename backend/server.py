@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
-import asyncio, base64, os, re, jwt, uuid
+import asyncio, base64, logging, os, re, jwt, uuid
 from services.astrology import AstrologyCalculationError, AstrologyService
 from services.ai import AIServiceUnavailable, PalmReadingService, AstrologyInterpretationService, KundliChatService
 from services.payments import (
@@ -547,6 +547,12 @@ async def list_orders(user=Depends(current_user)):
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "https://www.astroreveal.in,https://astroreveal.in").split(",") if o.strip()], allow_methods=["*"], allow_headers=["*"])
 @app.on_event("startup")
-async def startup(): await credits.ensure_indexes(db)
+async def startup():
+    # A database hiccup while creating indexes must never stop the whole API from starting.
+    # The error is logged loudly so it shows up in Railway's Deploy Logs.
+    try:
+        await credits.ensure_indexes(db)
+    except Exception as exc:
+        logging.getLogger("uvicorn.error").error("Could not create credit_grants indexes: %r", exc)
 @app.on_event("shutdown")
 async def shutdown(): client.close()
