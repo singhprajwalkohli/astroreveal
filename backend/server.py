@@ -47,7 +47,7 @@ MAX_PROFILES = int(os.environ.get("MAX_PROFILES", "5"))
 # Sign-in protection. Per-EMAIL limits are strict (they stop password guessing on one account and cannot be
 # dodged by changing IP). Per-IP limits are generous on purpose: behind some proxies many real users can share one IP.
 LOGIN_FAILS_PER_EMAIL = int(os.environ.get("LOGIN_FAILS_PER_EMAIL", "5"))
-LOGIN_FAILS_PER_IP = int(os.environ.get("LOGIN_FAILS_PER_IP", "60"))
+LOGIN_FAILS_PER_IP = int(os.environ.get("LOGIN_FAILS_PER_IP", "20"))
 GOOGLE_FAILS_PER_IP = int(os.environ.get("GOOGLE_FAILS_PER_IP", "60"))
 REGISTER_PER_IP_PER_HOUR = int(os.environ.get("REGISTER_PER_IP_PER_HOUR", "20"))
 AUTH_WINDOW_MINUTES = 15
